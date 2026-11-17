@@ -1,0 +1,42 @@
+# Imagem só do registry da plataforma e com versão fixa (nada de :latest nem sem tag).
+# No banco, o prefixo é o Quay curado.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: imagem-confiavel
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments", "statefulsets"]
+  variables:
+    - name: imagens
+      expression: >-
+        object.spec.template.spec.containers.map(c, c.image) +
+        (has(object.spec.template.spec.initContainers) ?
+          object.spec.template.spec.initContainers.map(c, c.image) : [])
+  validations:
+    - expression: variables.imagens.all(i, i.startsWith('ghcr.io/gerffeson-lab/'))
+      message: imagem fora do registry da plataforma (ghcr.io/gerffeson-lab/)
+      reason: Forbidden
+    - expression: >-
+        variables.imagens.all(i, i.contains('@sha256:') ||
+        (i.split('/')[i.split('/').size() - 1].contains(':') && !i.endsWith(':latest')))
+      message: imagem precisa de versão fixa (tag ou digest); :latest não é aceito
+      reason: Invalid
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: imagem-confiavel
+spec:
+  policyName: imagem-confiavel
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchExpressions:
+        - key: plataforma.acme/produto
+          operator: Exists

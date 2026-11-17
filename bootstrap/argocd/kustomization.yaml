@@ -1,0 +1,15 @@
+# Argo CD da comunidade, versão fixa. No OpenShift, isto vira a Subscription do
+# operator OpenShift GitOps (o resto do repo não muda).
+#   kubectl apply -k bootstrap/argocd --server-side
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: argocd
+resources:
+  - namespace.yaml
+  - https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.7/manifests/install.yaml
+# economiza memória no cluster local: sem SSO (dex) e sem notificações
+replicas:
+  - name: argocd-dex-server
+    count: 0
+  - name: argocd-notifications-controller
+    count: 0

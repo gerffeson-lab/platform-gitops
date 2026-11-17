@@ -1,0 +1,43 @@
+# Todo container de produto declara limits, e nenhum passa de 2 CPU / 4Gi.
+# ValidatingAdmissionPolicy é nativa do Kubernetes (GA na 1.30) e do OpenShift 4.17+:
+# substitui a ClusterPolicy equivalente do Kyverno sem operator extra.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: recursos-por-container
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments", "statefulsets"]
+  variables:
+    - name: containers
+      expression: object.spec.template.spec.containers
+  validations:
+    - expression: >-
+        variables.containers.all(c, has(c.resources) && has(c.resources.limits) &&
+        'cpu' in c.resources.limits && 'memory' in c.resources.limits)
+      message: todo container precisa declarar resources.limits de cpu e memory
+      reason: Invalid
+    - expression: >-
+        variables.containers.all(c, !has(c.resources) || !has(c.resources.limits) ||
+        (!('cpu' in c.resources.limits) || quantity(c.resources.limits.cpu).compareTo(quantity('2')) <= 0) &&
+        (!('memory' in c.resources.limits) || quantity(c.resources.limits.memory).compareTo(quantity('4Gi')) <= 0))
+      message: limite por container é 2 CPU e 4Gi de memória; acima disso, peça exceção à plataforma
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: recursos-por-container
+spec:
+  policyName: recursos-por-container
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchExpressions:
+        - key: plataforma.acme/produto
+          operator: Exists

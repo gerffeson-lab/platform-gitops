@@ -1,0 +1,90 @@
+# Onboarding do produto crt/credito. Um arquivo por produto, gerado a partir do catálogo
+# do self-service (catalogo/siglas.yaml) quando o produto entra por PR. Aqui só o
+# ambiente dev; hml e prd seguem o mesmo molde (ou outro cluster, via ACM no banco).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: crt-credito-dev
+  labels:
+    plataforma.acme/sigla: crt
+    plataforma.acme/produto: crt-credito
+    plataforma.acme/ambiente: dev
+    # equivalente ao SCC restricted-v2 do OpenShift: sem root, sem privilégios
+    pod-security.kubernetes.io/enforce: restricted
+---
+# rede de segurança no nível do pod: default para quem não declarar e teto por container
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: padrao
+  namespace: crt-credito-dev
+spec:
+  limits:
+    - type: Container
+      defaultRequest: {cpu: 100m, memory: 256Mi}
+      default: {cpu: 500m, memory: 512Mi}
+      max: {cpu: "2", memory: 4Gi}
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: produto
+  namespace: crt-credito-dev
+spec:
+  hard:
+    requests.cpu: "4"
+    requests.memory: 8Gi
+    limits.cpu: "8"
+    limits.memory: 16Gi
+---
+# o que o produto pode implantar: só no(s) namespace(s) dele, só recursos de namespace,
+# e sem mexer em quota/limites que a plataforma definiu
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: crt-credito
+  namespace: argocd
+spec:
+  description: Produto crt/credito
+  sourceRepos:
+    - https://github.com/gerffeson-lab/platform-gitops.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: crt-credito-*
+  clusterResourceWhitelist: []
+  namespaceResourceBlacklist:
+    - {group: "", kind: ResourceQuota}
+    - {group: "", kind: LimitRange}
+---
+# descobre os serviços sozinho: cada pasta produtos/crt-credito/<serviço>/<ambiente>
+# vira uma Application. O self-service não cria Application nenhuma.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: crt-credito
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: https://github.com/gerffeson-lab/platform-gitops.git
+        revision: main
+        directories:
+          - path: produtos/crt-credito/*/*
+  template:
+    metadata:
+      name: '{{ index .path.segments 2 }}-{{ .path.basename }}'
+      labels:
+        plataforma.acme/produto: crt-credito
+    spec:
+      project: crt-credito
+      source:
+        repoURL: https://github.com/gerffeson-lab/platform-gitops.git
+        targetRevision: main
+        path: '{{ .path.path }}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: 'crt-credito-{{ .path.basename }}'
+      syncPolicy:
+        automated: {prune: true, selfHeal: true}
